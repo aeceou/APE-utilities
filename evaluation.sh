@@ -1,3 +1,5 @@
+#!/bin/bash
+
 undo_BPE () {
 
 	sentencepiece_model=$1
