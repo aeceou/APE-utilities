@@ -14,32 +14,36 @@ undo_BPE () {
 
     sentencepiece_model=$1
     hypothesis_file=$2
-    raw_hypotheses=${output_directory}/raw_hypotheses
+    output_file=$3
     echo "Undoing BPE... (sentencepiece)"
     spm_decode \
         --model=${sentencepiece_model} \
         --input_format=piece \
-        < ${hypothesis_file} > \
-        ${raw_hypotheses}
+	    --output=${output_file} \
+        ${hypothesis_file}
     echo "BPE undone..."
 
     echo "Restoring special characters..."
-    cat ${raw_hypotheses} | sed 's/ TM / ™ /g' > ${raw_hypotheses}
-    cat ${raw_hypotheses} | sed 's/ ? / ? /g' > ${raw_hypotheses}
-    cat ${raw_hypotheses} | sed 's/′′/″/g' > ${raw_hypotheses}
+    cat ${output_file} | sed 's/ TM / ™ /g' > ${output_file}.tmp.1
+    cat ${output_file}.tmp.1 | sed 's/ ? / ? /g' > ${output_file}.tmp.2
+    cat ${output_file}.tmp.2 | sed 's/′′/″/g' > ${output_file}.tmp.3
+    mv ${output_file}.tmp.3 ${output_file}
+    rm ${output_file}.tmp.*
     echo "All special characters have been restored!"
 
 }
+
+raw_hypotheses=${output_directory}/raw_hypotheses
+
+undo_BPE ${sentencepiece_model} ${hypothesis_path} ${raw_hypotheses}
 
 script_directory=$( dirname $0 )
 BLEU_script=${script_directory}/multi-bleu.perl
 TER_script=${script_directory}/runTER.sh
 
-undo_BPE ${sentencepiece_model} ${hypothesis_path}
-
 echo "TER scoring..."
 bash ${TER_script} \
-    -h ${hypothesis_path} \
+    -h ${raw_hypotheses} \
     -r ${reference_path} \
     -o ${output_directory} \
     -s ${evaluation_result}
@@ -48,6 +52,6 @@ echo "TER scoring done..."
 echo "BLEU scoring..."
 perl ${BLEU_script} \
     ${reference_path} \
-    < ${hypothesis_path} > \
-    ${output_directory}/${evaluation_result}.BLEU
+    < ${raw_hypotheses} > \
+    ${output_directory}/${evaluation_result}_BLEU_output_caseInsens.sum
 echo "BLEU scoring done!"
