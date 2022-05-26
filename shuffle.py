@@ -2,6 +2,7 @@ import argparse
 import itertools
 import os
 import re
+import shutil
 from numpy.random import permutation
 
 def txt_len(files):
@@ -43,15 +44,17 @@ class TextShuffler(object):
         self.in_files = []
         for suffix in args.suffices:
             in_file_path = self.opts.in_prefix + '.' + suffix
-            in_file = open(in_file_path, 'rb')
+            in_file = open(in_file_path, 'r', encoding=self.opts.enc)
             self.in_files.append(in_file)
+        
+        # Just to calculate the length of the given files
         tmp_files = []
         for i, in_file in enumerate(self.in_files):
             tmp_file, orig_file = itertools.tee(in_file)
             tmp_files.append(tmp_file)
             self.in_files[i] = orig_file
         self.in_file_len = txt_len(tmp_files)
-        
+
         # To fit the data into the memory
         self.max_mem = self.opts.max_mem
         self.mem_splits = []
@@ -70,7 +73,88 @@ class TextShuffler(object):
             out_file_path = self.opts.out_prefix + '.' + suffix
             self.out_file_paths.append(out_file_path)
 
-    def run(self):
+    def macro_shuffle(self):
+        self.cut = self.opts.cut
+        remaining = self.in_file_len
+        if remaining < self.cut:
+            # Change the input files
+            self.in_files = []
+            for suffix in args.suffices:
+                in_file_path = self.opts.in_prefix + '.' + suffix
+                in_file = open(in_file_path, 'rb')
+                self.in_files.append(in_file)
+            return
+        
+        self.cuts = []
+        while remaining > self.cut:
+            self.cuts.append(self.cut)
+            remaining -= self.cut
+        if remaining > 0:
+            self.cuts.append(remaining)
+
+        in_file_dir = os.path.dirname(self.opts.in_prefix)
+        if in_file_dir == '':
+            in_file_dir = os.getcwd()
+        buffer_dir = os.path.join(in_file_dir, 'shuffle_buffer')
+        os.makedirs(buffer_dir, exist_ok=True)
+
+        shuffle_map = permutation(len(self.cuts)).tolist()
+        buffer_idx = 0
+        shuffle_idx = shuffle_map[buffer_idx]
+        buffer_len = self.cuts[buffer_idx]
+        data = []
+
+        count = 0
+        for lines in zip(*self.in_files):
+            if count < buffer_len:
+                data.append(lines)
+                count += 1
+            else:
+                for i, suffix in enumerate(self.opts.suffices):
+                    buffer_path = os.path.join(
+                        buffer_dir,
+                        f'{shuffle_idx+1}.{suffix}')
+                    with open(buffer_path, 'w', encoding=self.opts.enc)\
+                        as buffer_file:
+                        for datum in data:
+                            buffer_file.write(datum[i])
+
+                count, data = 1, [lines]
+                buffer_idx += 1
+                if buffer_idx < len(self.cuts):
+                    shuffle_idx = shuffle_map[buffer_idx]
+                    buffer_len = self.cuts[buffer_idx]
+
+        # The last pieces
+        for i, suffix in enumerate(self.opts.suffices):
+            buffer_path = os.path.join(
+                buffer_dir,
+                f'{shuffle_idx+1}.{suffix}')
+            with open(buffer_path, 'w', encoding=self.opts.enc)\
+                as buffer_file:
+                for datum in data:
+                    buffer_file.write(datum[i])
+
+        # Merge all buffer slices
+        for i in range(1, (len(self.cuts) + 1)):
+            for suffix in self.opts.suffices:
+                if i == 1:
+                    os.system(f'cat {buffer_dir}/{i}.{suffix} > {in_file_dir}/macro_shuffled.{suffix}')
+                else:
+                    os.system(f'cat {buffer_dir}/{i}.{suffix} >> {in_file_dir}/macro_shuffled.{suffix}')
+        
+        # Change the input files
+        self.in_files = []
+        for suffix in args.suffices:
+            in_file_path = os.path.join(in_file_dir,
+                                        'macro_shuffled' + '.' + suffix)
+            in_file = open(in_file_path, 'rb')
+            self.in_files.append(in_file)
+
+        # Remove the buffer directory
+        shutil.rmtree(buffer_dir)
+
+    def micro_shuffle(self):
         shuffle_maps = [permutation(self.mem_splits[i]).tolist() for i
                         in range(len(self.mem_splits))]
         mem_idx = 0
@@ -126,7 +210,8 @@ class TextShuffler(object):
 
 def main(args):
     machine = TextShuffler(args)
-    machine.run()
+    machine.macro_shuffle()
+    machine.micro_shuffle()
 
 
 if __name__ == "__main__":
@@ -140,6 +225,8 @@ if __name__ == "__main__":
     parser.add_argument("-enc", "--encoding",
                         type=str, required=False, default='utf-8',
                         dest='enc')
+    parser.add_argument("-cut", "--cut", type=int, required=False,
+                        default='100000')
     parser.add_argument("-max_mem", "--maximum_memory",
                         type=int, required=False, default='100000',
                         dest='max_mem')
